@@ -126,16 +126,11 @@ CMD ["nginx", "-g", "daemon off;"]
 
 **关于 `# syntax=docker/dockerfile:1`**：这是 BuildKit 的语法指令，启用 `--mount=type=cache` 等新特性。但它会触发 Docker 去 Docker Hub 拉 `docker/dockerfile:1` 镜像，**在国内网络环境会超时**。本项目暂未加这行——现代 Docker Desktop 默认已经启用 BuildKit，cache mount 仍然能用。如果一定要加，建议先在 Docker Desktop 配国内镜像加速。
 
-**踩坑实录 1：Node 版本**
-最初用 `node:22-alpine`，碰到 `npm error Exit handler never called!`——Node 22 自带的 npm 10.x 在 BuildKit cache mount 下有已知 bug，构建直接失败。**Node 20 LTS 是最稳的选择**。如果非要用 22，需要在 `npm ci` 前加一步 `npm install -g npm@latest` 升级到 npm 11.x。
-
-**踩坑实录 2：跨 stage `COPY --from=deps node_modules` 丢失 `.bin` 软链**
-最初是三段式（deps + builder + runner），builder 里 `COPY --from=deps /app/node_modules ./node_modules`。结果 GHA 上构建报 `sh: tsc: not found`，因为 `.bin/` 目录下的软链没复制过来。**两段式合并 deps 和 builder 后问题消失**。
-
-**踩坑实录 3（最严重）：`npm ci` 在 CI 上静默失败**
-最初没有 `.npmrc`，`npm ci` 在 GHA runner 上跑 8 分钟（!）才完成，但 `node_modules` 几乎是空的。原因是默认 registry `registry.npmjs.org` 在某些网络环境下连接不稳定，npm 反复 retry 后超时退出码 0 但没装上包。**解决方案：加 `.npmrc` 指定 npmmirror 镜像 + 重试策略**（详见 2.5）。
-
-**Vite vs Next.js 注意**：Next.js 用 `output:'standalone'` 出 `server.js`，runtime 必须 Node；Vite 出纯静态 `dist/`，用 nginx 更小更快。**runtime stage 不能照搬 Next.js 项目的写法**。
+**本节踩坑实录**：
+- **Node 版本**：最初用 `node:22-alpine`，碰到 `npm error Exit handler never called!`——Node 22 自带的 npm 10.x 在 BuildKit cache mount 下有已知 bug，构建直接失败。**Node 20 LTS 是最稳的选择**。如果非要用 22，需要在 `npm ci` 前加一步 `npm install -g npm@latest` 升级到 npm 11.x。
+- **跨 stage `COPY --from=deps node_modules` 丢失 `.bin` 软链**：最初是三段式（deps + builder + runner），builder 里 `COPY --from=deps /app/node_modules ./node_modules`。结果 GHA 上构建报 `sh: tsc: not found`，因为 `.bin/` 目录下的软链没复制过来。**两段式合并 deps 和 builder 后问题消失**。
+- **`npm ci` 在 CI 上静默失败（最严重）**：最初没有 `.npmrc`，`npm ci` 在 GHA runner 上跑 8 分钟（!）才完成，但 `node_modules` 几乎是空的。原因是默认 registry `registry.npmjs.org` 在某些网络环境下连接不稳定，npm 反复 retry 后超时退出码 0 但没装上包。**解决方案：加 `.npmrc` 指定 npmmirror 镜像 + 重试策略**（详见 2.5）。
+- **Vite vs Next.js**：Next.js 用 `output:'standalone'` 出 `server.js`，runtime 必须 Node；Vite 出纯静态 `dist/`，用 nginx 更小更快。**runtime stage 不能照搬 Next.js 项目的写法**。
 
 #### 2.2 `nginx.conf`（容器内）
 
@@ -214,16 +209,17 @@ env:
 | `LIGHTSAIL_SSH_KEY` | `-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----`（多行私钥全文） | 同上 `key` | SSH 私钥内容（不是文件路径！要把整个 .pem 文件内容复制进来）。runner 用它登录你的服务器 |
 | `DEPLOY_DIR` | `/home/ubuntu/know-your-attention` | SSH 脚本里 `cd $DEPLOY_DIR` | 告诉远程脚本进哪个目录执行 `docker compose pull`。每个项目一个独立目录 |
 
-**前 2 个怎么来**：在 AWS 控制台 → IAM → Users → 选一个有 ECR 推送权限的用户 → Security credentials → Create access key → 立刻复制下来或下载 csv（**只显示这一次**，关闭窗口后永远查不到）
-
-**后 3 个 LIGHTSAIL_\*** 怎么来：
+**各 Secret 怎么来**：
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`：AWS 控制台 → IAM → Users → 选一个有 ECR 推送权限的用户 → Security credentials → Create access key → 立刻复制下来或下载 csv（**只显示这一次**，关闭窗口后永远查不到）
 - `LIGHTSAIL_HOST`：AWS Lightsail 控制台实例详情页能看到 Public IP
 - `LIGHTSAIL_USER`：Ubuntu 镜像默认是 `ubuntu`，Amazon Linux 是 `ec2-user`
-- `LIGHTSAIL_SSH_KEY`：本地 SSH 进服务器用的那个 `.pem` 文件的**全部内容**。可以本地执行 `cat ~/.ssh/你的key.pem` 后整段复制（包括 BEGIN/END 行和中间所有换行）
+- `LIGHTSAIL_SSH_KEY`：本地 SSH 进服务器用的那个 `.pem` 文件的**全部内容**，本地执行 `cat ~/.ssh/你的key.pem` 后整段复制（包括 BEGIN/END 行和中间所有换行）
 
-**踩坑点：AWS Secret Key 不可回查**。AWS 控制台只在创建那一刻显示一次，之后任何地方都查不到。如果丢了 → IAM 里新建一对（一个 user 允许 2 个 active key，不影响旧的）。
-
-**踩坑点：Credentials could not be loaded** → Secret 名字写错、设到了 Environment secrets / Variables（而不是 Repository secrets）、或私有仓库没继承 org secret。调试加一步打印长度（值会自动打码）：
+**录入 Secret 的常见踩坑**：
+- **AWS Secret Key 不可回查**：AWS 控制台只在创建那一刻显示一次，之后任何地方都查不到。如果丢了 → IAM 里新建一对（一个 user 允许 2 个 active key，不影响旧的）
+- **凭证泄露要立即轮换**：任何贴到聊天/截图/issue 里的 AWS key 等同公开，必须立刻 IAM 里 Deactivate + Delete 那对 key 并新建
+- **末尾不要按回车**：录入框里粘完值直接点保存，按 Enter 会把 `\n` 一起存进去，后续 `cd "$VAR"` 会因路径多了换行符报 `No such file or directory`
+- **`Credentials could not be loaded`**：Secret 名字写错、设到了 Environment secrets / Variables（而不是 Repository secrets）、或私有仓库没继承 org secret。调试加一步打印长度（值会自动打码）：
 
 ```yaml
 - name: Debug
@@ -604,11 +600,26 @@ fetch-retry-maxtimeout=120000
 Workflow 里 `cache-from: type=gha` 会把构建中间状态存起来，上次有问题的缓存可能被反复"复活"。
 - 解决：GitHub 仓库 → Actions → 左侧 "Caches" → 全部删除，再 push
 
+### 错误 7：`The repository with name 'xxx' does not exist in the registry with id 'xxx'`
+镜像 push 失败，提示 ECR 仓库不存在——但你**确实建了**。根因是 **region 不匹配**：你在 AWS 控制台某个 region 下建的仓库，workflow 里推送时用的是另一个 region 的 endpoint。
+- AWS 每个 region 是完全独立的 ECR 注册中心，互不可见
+- 检查：workflow 里的 `AWS_REGION` / `ECR_REGISTRY` 域名前缀（`ap-northeast-2.amazonaws.com` ≠ `ap-northeast-1.amazonaws.com`）和你创建仓库时控制台 URL 里的 `region=xxx` 必须一致
+- AWS 控制台 URL 里的 region 会"粘"住——上次在哪个 region 操作过别的服务，下次切到 ECR 默认还是那个 region。**每次创建资源前先看控制台右上角的 region 切换器**
+
+### 错误 8：`cd: $'***\n': No such file or directory`（Secret 末尾混入换行）
+SSH 阶段执行脚本时报"目录不存在"，但路径明明对。线索：参数被打码成 `***`（来自 Secret），末尾 `\n` 表示这个 Secret 值带回车符。
+- 根因：GitHub Secrets 网页录入时按了回车再点 "Add"，回车字符被一起存进去
+- 解决方案 A：Update Secret 时把值删干净重粘，**粘完不要按 Enter**，直接点保存
+- 解决方案 B：路径类、IP 类不算敏感的"伪 Secret"直接硬编码在 workflow 里，绕开这个坑
+- 同类陷阱：`SERVER_HOST` `DEPLOY_DIR` 等任何用在命令参数里的 Secret 都可能踩这个
+
 ### 排查心法
 1. **失败先想"和成功的项目差什么"**：本次部署最难的一个 bug（错误 5）就是通过对比已部署成功的 `light-blog-fe` 仓库的 `.npmrc` 找到的
 2. **本地不能复现就加 verbose 日志**：`npm ci --loglevel=http`、`time` 前缀、`ls -la node_modules/.bin/` 输出当前状态，让 CI 把内部情况打出来
 3. **症状不等于根因**：本次根因是 npm ci 没装上包，但症状是 `tsc: not found`——直接搜症状很难找到答案
 4. **永远本地验证再 push**：节省的反馈循环时间能多解决十倍问题
+5. **错误日志倒着读**：报错最后 1-3 行通常含完整信息。问 5 个问题定位——错误本质 → 哪条命令 → 命令参数 → 参数来源 → 对应 workflow 哪一行
+6. **改完 workflow 必须 commit + push**：本地修改 GHA 看不见。`git status` 不为空就别急着说"我已经改了"
 
 ## 6. 关键文件位置总结
 

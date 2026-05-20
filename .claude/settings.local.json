@@ -8,7 +8,10 @@
       "Bash(git add *)",
       "Skill(efe:efe-deployer)",
       "Read(//Users/eleme/Documents/**)",
-      "Read(//Users/eleme/**)"
+      "Read(//Users/eleme/**)",
+      "Bash(awk '/^$/{n++;if\\(n>1\\)print NR\": \"n\" blank lines\";next}{n=0}' /Users/eleme/Documents/know-your-attention/DEPLOY-GUIDE.md)",
+      "Bash(grep -c \"^$\" /Users/eleme/Documents/know-your-attention/DEPLOY-GUIDE.md)",
+      "Bash(awk 'NR==FNR{a[NR]=$0;next}{print}' /Users/eleme/Documents/know-your-attention/DEPLOY-GUIDE.md)"
     ]
   }
 }
