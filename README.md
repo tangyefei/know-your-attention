@@ -1,6 +1,6 @@
 # Know Your Attention
 
-> 一个面向「频繁切换工作」场景的轻量级注意力管理 H5 工具。
+> 一个面向「频繁切换工作」场景的轻量级注意力管理工具。
 
 ![image.png](https://my-obsidian-images-bucket-2026.oss-cn-shanghai.aliyuncs.com/img/20260519212650435.png)
 
